@@ -107,11 +107,13 @@ class MLTrader:
 
     def _add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add technical indicators to the dataframe."""
-        # Convert OHLCV data to DataFrame with proper columns
-        if isinstance(df, list):
-            df = pd.DataFrame(df, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
+        # Ensure DataFrame has required columns
+        required_columns = ['open', 'high', 'low', 'close', 'volume']
+        if not all(col in df.columns for col in required_columns):
+            raise ValueError(f"DataFrame missing required columns. Expected {required_columns}, got {df.columns.tolist()}")
+
+        # Calculate indicators
+        df = df.copy()  # Create a copy to avoid modifying the original
 
         # Calculate Moving Averages
         df['MA_50'] = df['close'].rolling(window=50).mean()
@@ -257,7 +259,13 @@ async def send_results(message: Any, df: pd.DataFrame) -> None:
 # ====================== MAIN EXECUTION ======================
 async def warmup_models():
     logging.info("Warming up ML models...")
-    df = pd.DataFrame(await fetch_data_async())
+    raw_data = await fetch_data_async()
+    df = pd.DataFrame(
+        raw_data,
+        columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+    )
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
     MLTrader().train(df)
     logging.info("Model warmup complete")
 
