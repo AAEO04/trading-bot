@@ -1,2 +1,9 @@
 2025-03-16 16:12:54,745 [INFO] httpx: HTTP Request: POST https://api.telegram.org/bot7501203971:AAFWGDdTiS2Rese2mLYZPbMgcF2hdi3XZDU/setWebhook "HTTP/1.1 200 OK"
 2025-03-16 16:15:21,369 [INFO] httpx: HTTP Request: POST https://api.telegram.org/bot7501203971:AAFWGDdTiS2Rese2mLYZPbMgcF2hdi3XZDU/setWebhook "HTTP/1.1 200 OK"
+2025-03-16 16:20:57,734 [INFO] httpx: HTTP Request: POST https://api.telegram.org/bot7501203971:AAFWGDdTiS2Rese2mLYZPbMgcF2hdi3XZDU/getMe "HTTP/1.1 200 OK"
+2025-03-16 16:20:57,735 [INFO] telegram.ext.Application: Application started
+2025-03-16 16:20:57,954 [INFO] httpx: HTTP Request: POST https://api.telegram.org/bot7501203971:AAFWGDdTiS2Rese2mLYZPbMgcF2hdi3XZDU/setWebhook "HTTP/1.1 200 OK"
+2025-03-16 16:26:17,417 [INFO] httpx: HTTP Request: POST https://api.telegram.org/bot7501203971:AAFWGDdTiS2Rese2mLYZPbMgcF2hdi3XZDU/getMe "HTTP/1.1 200 OK"
+2025-03-16 16:26:17,420 [INFO] telegram.ext.Application: Application started
+2025-03-16 16:26:17,577 [INFO] httpx: HTTP Request: POST https://api.telegram.org/bot7501203971:AAFWGDdTiS2Rese2mLYZPbMgcF2hdi3XZDU/setWebhook "HTTP/1.1 200 OK"
+2025-03-16 16:26:17,586 [ERROR] root: Failed to start webhook: web.Application instance initialized with different loop

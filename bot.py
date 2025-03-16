@@ -233,7 +233,7 @@ if __name__ == "__main__":
     bot_app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
-        .rate_limiter(AIORateLimiter(max_retries=1))  # Reduce retries
+        .rate_limiter(AIORateLimiter(max_retries=1))
         .build()
     )
     
@@ -241,25 +241,51 @@ if __name__ == "__main__":
         asyncio.run(warmup_models())
     
     if config.environment == "production":
-        # Create the web application
-        web_app = aiohttp.web.Application()
-        web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
-        
-        # Start the webhook
-        bot_app.start()
-        
-        # Set the webhook
-        asyncio.run(bot_app.bot.set_webhook(
-            url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
-            secret_token=WEBHOOK_SECRET
-        ))
-        
-        # Run the web application
-        aiohttp.web.run_app(
-            web_app,
-            host="0.0.0.0",
-            port=PORT,
-            ssl_context=None
-        )
+        async def main():
+            # Create the web application
+            web_app = aiohttp.web.Application()
+            web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
+            
+            # Initialize the bot
+            await bot_app.initialize()
+            await bot_app.start()
+            
+            # Set the webhook
+            await bot_app.bot.set_webhook(
+                url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
+                secret_token=WEBHOOK_SECRET
+            )
+            
+            # Setup webhook route
+            async def handle_webhook(request):
+                if request.match_info.get("token") == TELEGRAM_TOKEN:
+                    update = Update.de_json(await request.json(), bot_app.bot)
+                    await bot_app.process_update(update)
+                    return aiohttp.web.Response()
+                return aiohttp.web.Response(status=403)
+            
+            # Add the webhook route
+            web_app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
+            
+            # Find available port
+            for port in range(10000, 10010):
+                try:
+                    runner = aiohttp.web.AppRunner(web_app)
+                    await runner.setup()
+                    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+                    await site.start()
+                    logging.info(f"Server started on port {port}")
+                    break
+                except OSError:
+                    if port == 10009:  # Last attempt
+                        raise
+                    continue
+            
+            # Keep the server running
+            while True:
+                await asyncio.sleep(3600)  # Sleep for an hour
+
+        # Run everything in a single event loop
+        asyncio.run(main())
     else:
         bot_app.run_polling()
