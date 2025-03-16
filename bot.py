@@ -366,50 +366,53 @@ if __name__ == "__main__":
     
     if config.environment == "production":
         async def main():
-            # Create the web application
-            web_app = aiohttp.web.Application()
-            web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
+            try:
+                # Initialize web app
+                web_app = aiohttp.web.Application()
+                web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
+                
+                # Start bot
+                await bot_app.initialize()
+                await bot_app.start()
+                
+                # Set webhook
+                webhook_url = f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}"
+                await bot_app.bot.set_webhook(
+                    url=webhook_url,
+                    allowed_updates=["message", "callback_query"],
+                    secret_token=WEBHOOK_SECRET,
+                    drop_pending_updates=True
+                )
+                logging.info(f"Webhook set to: {webhook_url}")
+                
+                # Add webhook handler
+                web_app.router.add_post(
+                    f"/{TELEGRAM_TOKEN}",
+                    lambda r: bot_app.update_queue.put_nowait(r)
+                )
+                
+                # Start server
+                runner = aiohttp.web.AppRunner(web_app)
+                await runner.setup()
+                site = aiohttp.web.TCPSite(
+                    runner,
+                    host="0.0.0.0",
+                    port=int(os.getenv("PORT", 10000))
+                )
+                await site.start()
+                
+                # Keep alive
+                while True:
+                    await asyncio.sleep(300)
+                    logging.info("Bot is alive")
             
-            # Initialize the bot
-            await bot_app.initialize()
-            await bot_app.start()
-            
-            # Set the webhook
-            await bot_app.bot.set_webhook(
-                url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
-                secret_token=WEBHOOK_SECRET
-            )
-            
-            # Setup webhook route
-            async def handle_webhook(request):
-                if request.match_info.get("token") == TELEGRAM_TOKEN:
-                    update = Update.de_json(await request.json(), bot_app.bot)
-                    await bot_app.process_update(update)
-                    return aiohttp.web.Response()
-                return aiohttp.web.Response(status=403)
-            
-            # Add the webhook route
-            web_app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
-            
-            # Find available port
-            for port in range(10000, 10010):
-                try:
-                    runner = aiohttp.web.AppRunner(web_app)
-                    await runner.setup()
-                    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
-                    await site.start()
-                    logging.info(f"Server started on port {port}")
-                    break
-                except OSError:
-                    if port == 10009:  # Last attempt
-                        raise
-                    continue
-            
-            # Keep the server running
-            while True:
-                await asyncio.sleep(3600)  # Sleep for an hour
-
-        # Run everything in a single event loop
+            except Exception as e:
+                logging.error(f"Fatal error: {e}")
+                raise
+        
+        # Run the bot
+        if IS_RENDER:
+            asyncio.run(warmup_models())
         asyncio.run(main())
     else:
         bot_app.run_polling()
