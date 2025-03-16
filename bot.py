@@ -353,7 +353,7 @@ if __name__ == "__main__":
     
     if config.environment == "production":
         async def main():
-            # Create the web application
+            # Create the web application with better logging
             web_app = aiohttp.web.Application()
             web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
             
@@ -361,42 +361,66 @@ if __name__ == "__main__":
             await bot_app.initialize()
             await bot_app.start()
             
-            # Set the webhook
+            # Get the bot info to verify token
+            me = await bot_app.bot.get_me()
+            logging.info(f"Bot authorized as @{me.username}")
+            
+            # Setup webhook with proper verification
+            webhook_url = f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}"
             await bot_app.bot.set_webhook(
-                url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
-                secret_token=WEBHOOK_SECRET
+                url=webhook_url,
+                allowed_updates=['message', 'callback_query'],
+                secret_token=WEBHOOK_SECRET,
+                drop_pending_updates=True
             )
+            logging.info(f"Webhook set to: {webhook_url}")
             
-            # Setup webhook route
+            # Improved webhook handler with verification and logging
             async def handle_webhook(request):
-                if request.match_info.get("token") == TELEGRAM_TOKEN:
-                    update = Update.de_json(await request.json(), bot_app.bot)
+                try:
+                    # Verify secret token
+                    if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET:
+                        logging.warning("Invalid secret token in webhook request")
+                        return aiohttp.web.Response(status=403)
+                    
+                    # Parse update
+                    update_data = await request.json()
+                    logging.info("Received webhook update")
+                    
+                    # Process update
+                    update = Update.de_json(update_data, bot_app.bot)
                     await bot_app.process_update(update)
+                    
                     return aiohttp.web.Response()
-                return aiohttp.web.Response(status=403)
+                except Exception as e:
+                    logging.error(f"Error processing webhook: {e}")
+                    return aiohttp.web.Response(status=500)
             
-            # Add the webhook route
+            # Add webhook route
             web_app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
             
-            # Find available port
-            for port in range(10000, 10010):
-                try:
-                    runner = aiohttp.web.AppRunner(web_app)
-                    await runner.setup()
-                    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
-                    await site.start()
-                    logging.info(f"Server started on port {port}")
-                    break
-                except OSError:
-                    if port == 10009:  # Last attempt
-                        raise
-                    continue
+            # Start server
+            port = int(os.getenv("PORT", 10000))
+            runner = aiohttp.web.AppRunner(web_app)
+            await runner.setup()
+            site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            logging.info(f"Server started on port {port}")
             
-            # Keep the server running
+            # Keep alive with health checks
             while True:
-                await asyncio.sleep(3600)  # Sleep for an hour
+                try:
+                    # Verify bot is still responding
+                    await bot_app.bot.get_me()
+                    logging.info("Bot is alive")
+                    await asyncio.sleep(300)  # Check every 5 minutes
+                except Exception as e:
+                    logging.error(f"Health check failed: {e}")
+                    await asyncio.sleep(60)  # Retry sooner if failed
 
-        # Run everything in a single event loop
+        # Run everything
+        if IS_RENDER:
+            asyncio.run(warmup_models())
         asyncio.run(main())
     else:
         bot_app.run_polling()
