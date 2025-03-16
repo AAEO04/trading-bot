@@ -50,6 +50,10 @@ class Settings(BaseSettings):
 
     model_config = ConfigDict(env_file=".env")
 
+# Instantiate the Settings class
+config = Settings()
+
+# Access configuration values
 TELEGRAM_TOKEN = config.telegram_token
 PASSWORD_HASH = config.password_hash
 PORT = config.port
@@ -62,6 +66,8 @@ STRATEGIES = ["MA Crossover", "RSI", "MACD", "ML Enhanced"]
 DEFAULT_TRADING_PAIR = "BTC/USDT"
 
 plot_lock = threading.Lock()
+
+AUTH = 0  # Define AUTH as a state for the conversation handler
 
 # ====================== TRADING CORE ======================
 class MLTrader:
@@ -168,11 +174,17 @@ async def fetch_data_async(
             logging.warning(f"Retry {attempt} failed. New delay: {delay:.1f}s")
 
 # ====================== TELEGRAM HANDLERS ======================
+
+async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a dashboard message to the user."""
+    await update.message.reply_text(
+        "Welcome to the trading bot dashboard! Use the commands to interact with the bot."
+    )
 async def authenticate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_input = update.message.text
     if len(user_input) < 8:
-        await update.message.reply_text("❌ Password must be at least 8 characters")
-        return AUTH
+        await show_dashboard(update, context)
+        return AUTH  # Use the defined AUTH variable
     
     if hashlib.sha256(user_input.encode()).hexdigest() == PASSWORD_HASH:
         AUTHORIZED_USERS[update.effective_user.id] = True
@@ -181,7 +193,7 @@ async def authenticate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ConversationHandler.END
     
     await update.message.reply_text("❌ Invalid password. Try again:")
-    return AUTH
+    return AUTH  # Use the defined AUTH variable
 
 async def send_results(message: Any, df: pd.DataFrame) -> None:
     filename = f"results_{uuid.uuid4().hex}.png"
@@ -214,14 +226,14 @@ async def warmup_models():
 
 if __name__ == "__main__":
     bot_app = (
-    ApplicationBuilder()
-    .token(TELEGRAM_TOKEN)
-    .rate_limiter(AIORateLimiter(
-        max_retries=3, 
-        max_delay=30
-    ))
-    .build()
-)
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .rate_limiter(AIORateLimiter(
+            max_retries=3, 
+            max_delay=30
+        ))
+        .build()
+    )
     
     if IS_RENDER:
         asyncio.run(warmup_models())
