@@ -47,8 +47,12 @@ class Settings(BaseSettings):
     port: int = 10000
     webhook_secret: str = ""
     render: bool = False
+    environment: str = "development"
 
-    model_config = ConfigDict(env_file=".env")
+    model_config = ConfigDict(
+        env_file=".env",
+        extra="allow"  # Allow extra fields from environment variables
+    )
 
 # Instantiate the Settings class
 config = Settings()
@@ -234,17 +238,27 @@ if __name__ == "__main__":
     )
     
     if IS_RENDER:
-        asyncio.run(warmup_models())  # Used await  instead of asyncio.run
+        asyncio.run(warmup_models())
     
-    if os.getenv("ENVIRONMENT") == "production":
+    if config.environment == "production":
+        # Create the web application
         web_app = aiohttp.web.Application()
         web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
-        bot_app.run_webhook(
-            web_app=web_app,
+        
+        # Start the webhook
+        bot_app.start()
+        
+        # Set the webhook
+        asyncio.run(bot_app.bot.set_webhook(
+            url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
+            secret_token=WEBHOOK_SECRET
+        ))
+        
+        # Run the web application
+        aiohttp.web.run_app(
+            web_app,
             host="0.0.0.0",
             port=PORT,
-            webhook_url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
-            secret_token=WEBHOOK_SECRET,
             ssl_context=None
         )
     else:
