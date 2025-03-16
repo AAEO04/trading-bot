@@ -105,7 +105,39 @@ class MLTrader:
         except FileNotFoundError:
             self.models["ann"] = MLPRegressor(hidden_layer_sizes=(50, 50))
 
+    def _add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add technical indicators to the dataframe."""
+        # Convert OHLCV data to DataFrame with proper columns
+        if isinstance(df, list):
+            df = pd.DataFrame(df, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+
+        # Calculate Moving Averages
+        df['MA_50'] = df['close'].rolling(window=50).mean()
+        df['MA_200'] = df['close'].rolling(window=200).mean()
+
+        # Calculate RSI
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+
+        # Calculate MACD
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+
+        # Forward fill NaN values
+        df.fillna(method='ffill', inplace=True)
+        # Backward fill any remaining NaN values at the beginning
+        df.fillna(method='bfill', inplace=True)
+
+        return df
+
     def train(self, df: pd.DataFrame) -> None:
+        """Train ML models on the provided data."""
         df = self._add_indicators(df)
         X = df[["MA_50", "MA_200", "RSI", "MACD"]].iloc[:-1]
         y = df["close"].pct_change().shift(-1).dropna()
