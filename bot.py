@@ -216,11 +216,20 @@ def execute_strategy(df, strategy):
 # ====================== MAIN APPLICATION ======================
 AUTH = 0
 
+
 if __name__ == '__main__':
-    if not os.path.exists(CONFIG_FILE):
-        print("First-time setup required! Run 'python setup.py'")
-        exit(1)
-        
+    # For production (Render), use environment variables directly
+    if os.getenv('ENVIRONMENT') == 'production':
+        config = {
+            'telegram_token': os.getenv('TELEGRAM_TOKEN'),
+            'password_hash': os.getenv('PASSWORD_HASH')
+        }
+    else:
+        # For local development
+        if not os.path.exists(CONFIG_FILE):
+            print("First-time setup required! Run 'python setup.py'")
+            exit(1)
+        config = json.load(open(CONFIG_FILE))        
     config = json.load(open(CONFIG_FILE))
     
     app = ApplicationBuilder().token(config['telegram_token']).build()
