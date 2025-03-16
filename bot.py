@@ -4,6 +4,9 @@ import ccxt
 import pandas as pd
 import numpy as np
 import joblib
+import matplotlib
+matplotlib.use('Agg')  # Required for server environments
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
@@ -18,8 +21,7 @@ from telegram.ext import (
     filters,
     ConversationHandler
 )
-from flask import Flask
-import threading
+import aiohttp.web
 
 # ====================== CONFIGURATION ======================
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -28,16 +30,6 @@ PORT = int(os.getenv('PORT', 10000))
 AUTHORIZED_USERS = {}
 EXCHANGE = ccxt.binance({'enableRateLimit': True})
 STRATEGIES = ["MA Crossover", "RSI", "MACD", "ML Enhanced"]
-
-# ====================== FLASK SERVER ======================
-app = Flask(__name__)
-
-@app.route('/')
-def health_check():
-    return "Trading Bot Operational", 200
-
-def run_flask():
-    app.run(host='0.0.0.0', port=PORT)
 
 # ====================== TRADING CORE ======================
 class MLTrader:
@@ -48,7 +40,30 @@ class MLTrader:
             'svm': SVR(),
             'ann': MLPRegressor(hidden_layer_sizes=(50, 50))
         }
-    
+
+    def _add_indicators(self, df):
+        """Calculate technical indicators"""
+        # Moving Averages
+        df['MA_50'] = df['close'].rolling(50).mean()
+        df['MA_200'] = df['close'].rolling(200).mean()
+        
+        # RSI Calculation
+        delta = df['close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(14).mean()
+        avg_loss = loss.rolling(14).mean()
+        rs = avg_gain / avg_loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # MACD Calculation
+        exp12 = df['close'].ewm(span=12, adjust=False).mean()
+        exp26 = df['close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp12 - exp26
+        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        return df.dropna()
+
     def train(self, df):
         df = self._add_indicators(df)
         X = df[['MA_50', 'MA_200', 'RSI', 'MACD']].iloc[:-1]
@@ -67,6 +82,7 @@ class Backtester:
         capital = 10000
         position = 0
         portfolio = []
+        entry_price = 0
         
         for _, row in df.iterrows():
             price = row['close']
@@ -136,13 +152,31 @@ def fetch_data():
     return pd.DataFrame(ohlcv, columns=['timestamp','open','high','low','close','volume'])
 
 def apply_strategy(df, strategy):
-    # Strategy implementations here
-    pass
+    """Generate trading signals based on selected strategy"""
+    df = df.copy()
+    
+    if strategy == "MA Crossover":
+        df['MA_20'] = df['close'].rolling(20).mean()
+        df['MA_50'] = df['close'].rolling(50).mean()
+        df['signal'] = np.where(df['MA_20'] > df['MA_50'], 1, -1)
+    
+    elif strategy == "RSI":
+        df['signal'] = np.where(df['RSI'] < 30, 1, np.where(df['RSI'] > 70, -1, 0))
+    
+    elif strategy == "MACD":
+        df['signal'] = np.where(df['MACD'] > df['Signal'], 1, -1)
+    
+    return df['signal'].fillna(0).astype(int)
 
 async def send_results(message, df):
-    plt.figure(figsize=(12,6))
+    plt.figure(figsize=(12, 6))
     df['portfolio'].plot(title='Backtest Results')
+    plt.ylabel('Portfolio Value (USD)')
+    plt.xlabel('Date')
+    plt.grid(True)
     plt.savefig('results.png')
+    plt.close()
+    
     await message.reply_photo(
         photo=open('results.png', 'rb'),
         caption=f"📈 Final Balance: ${df['portfolio'].iloc[-1]:.2f}"
@@ -152,17 +186,13 @@ async def send_results(message, df):
 AUTH = 0
 
 if __name__ == '__main__':
-    # Start Flask server
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    # Start Telegram bot
     bot_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
-        states={AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, authenticate)]},
+        states={
+            AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, authenticate)]
+        },
         fallbacks=[]
     )
     
@@ -170,11 +200,21 @@ if __name__ == '__main__':
     bot_app.add_handler(CallbackQueryHandler(handle_strategy))
     
     if os.getenv('ENVIRONMENT') == 'production':
+        # Configure web server
+        web_app = bot_app.updater.http._app
+        
+        async def health_check(request):
+            return aiohttp.web.Response(text="Trading Bot Operational", status=200)
+        
+        web_app.router.add_get('/', health_check)
+        
+        # Start webhook
         bot_app.run_webhook(
-            listen='0.0.0.0',
+            host='0.0.0.0',
             port=PORT,
+            webhook_url=f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}",
             url_path=TELEGRAM_TOKEN,
-            webhook_url=f"https://your-app.onrender.com/{TELEGRAM_TOKEN}"
+            ssl_context=None
         )
     else:
         bot_app.run_polling()
