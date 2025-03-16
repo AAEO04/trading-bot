@@ -132,9 +132,9 @@ class MLTrader:
         df['MACD'] = exp1 - exp2
 
         # Forward fill NaN values
-        df.fillna(method='ffill', inplace=True)
+        df.ffill(inplace=True)
         # Backward fill any remaining NaN values at the beginning
-        df.fillna(method='bfill', inplace=True)
+        df.bfill(inplace=True)
 
         return df
 
@@ -258,6 +258,7 @@ async def send_results(message: Any, df: pd.DataFrame) -> None:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start command handler."""
+    logging.info(f"Processing /start command from user {update.effective_user.id}")
     if update.effective_user.id not in AUTHORIZED_USERS:
         await update.message.reply_text(
             "🔒 Please enter the password to access the bot:"
@@ -267,6 +268,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Help command handler."""
+    logging.info(f"Processing /help command from user {update.effective_user.id}")
     await update.message.reply_text(
         "📚 Available commands:\n"
         "/start - Start the bot\n"
@@ -277,6 +279,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Backtest command handler."""
+    logging.info(f"Processing /backtest command from user {update.effective_user.id}")
     if update.effective_user.id not in AUTHORIZED_USERS:
         await update.message.reply_text("❌ Please authenticate first using /start")
         return
@@ -301,6 +304,7 @@ async def backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Status command handler."""
+    logging.info(f"Processing /status command from user {update.effective_user.id}")
     if update.effective_user.id not in AUTHORIZED_USERS:
         await update.message.reply_text("❌ Please authenticate first using /start")
         return
