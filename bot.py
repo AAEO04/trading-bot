@@ -28,7 +28,8 @@ import logging
 import threading
 import uuid
 from typing import Optional, Dict, Any
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 # ====================== CONFIGURATION ======================
 logging.basicConfig(
@@ -47,10 +48,7 @@ class Settings(BaseSettings):
     webhook_secret: str = ""
     render: bool = False
 
-    class Config:
-        env_file = ".env"
-
-config = Settings()
+    model_config = ConfigDict(env_file=".env")
 
 TELEGRAM_TOKEN = config.telegram_token
 PASSWORD_HASH = config.password_hash
