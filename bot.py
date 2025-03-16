@@ -216,22 +216,38 @@ async def fetch_data_async(
 async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a dashboard message to the user."""
     await update.message.reply_text(
-        "Welcome to the trading bot dashboard! Use the commands to interact with the bot."
+        "🤖 *Trading Bot Dashboard*\n\n"
+        "Available commands:\n"
+        "📊 /backtest - Run trading simulation\n"
+        "ℹ️ /status - Check bot status\n"
+        "❓ /help - Show all commands\n\n"
+        "_Select a command to continue_",
+        parse_mode='Markdown'
     )
+
 async def authenticate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_input = update.message.text
-    if len(user_input) < 8:
-        await show_dashboard(update, context)  # Add context argument
+    """Handle authentication attempts."""
+    try:
+        user_input = update.message.text.strip()
+        logging.info(f"Authentication attempt from user {update.effective_user.id}")
+        
+        if len(user_input) < 8:
+            await update.message.reply_text("❌ Password must be at least 8 characters. Try again:")
+            return AUTH
+        
+        if hashlib.sha256(user_input.encode()).hexdigest() == PASSWORD_HASH:
+            AUTHORIZED_USERS[update.effective_user.id] = True
+            context.user_data["trading_pair"] = DEFAULT_TRADING_PAIR
+            await update.message.reply_text("✅ Authentication successful!")
+            await show_dashboard(update, context)
+            return ConversationHandler.END
+        
+        await update.message.reply_text("❌ Invalid password. Try again:")
         return AUTH
-    
-    if hashlib.sha256(user_input.encode()).hexdigest() == PASSWORD_HASH:
-        AUTHORIZED_USERS[update.effective_user.id] = True
-        context.user_data["trading_pair"] = DEFAULT_TRADING_PAIR
-        await show_dashboard(update, context)  # Add context argument
+    except Exception as e:
+        logging.error(f"Authentication error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try /start again.")
         return ConversationHandler.END
-    
-    await update.message.reply_text("❌ Invalid password. Try again:")
-    return AUTH
 
 async def send_results(message: Any, df: pd.DataFrame) -> None:
     filename = f"results_{uuid.uuid4().hex}.png"
@@ -363,7 +379,8 @@ async def warmup_models():
     logging.info("Model warmup complete")
 
 if __name__ == "__main__":
-    # Initialize bot application
+    # Initialize bot application with more detailed logging
+    logging.info("Initializing bot application...")
     bot_app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
@@ -371,13 +388,20 @@ if __name__ == "__main__":
         .build()
     )
     
-    # Register handlers
+    # Register handlers with logging
+    logging.info("Registering command handlers...")
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, authenticate)]
+            AUTH: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, 
+                    authenticate
+                )
+            ],
         },
-        fallbacks=[CommandHandler("start", start)]
+        fallbacks=[CommandHandler("start", start)],
+        name="auth_conversation"
     )
     
     # Add handlers
@@ -385,9 +409,8 @@ if __name__ == "__main__":
     bot_app.add_handler(CommandHandler("help", help_command))
     bot_app.add_handler(CommandHandler("backtest", backtest))
     bot_app.add_handler(CommandHandler("status", status))
-    
-    # Add error handler
     bot_app.add_error_handler(error_handler)
+    logging.info("All handlers registered successfully")
     
     if config.environment == "production":
         async def main():
