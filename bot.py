@@ -218,7 +218,7 @@ if __name__ == "__main__":
     bot_app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
-        .rate_limiter(RateLimiter(max_retries=3))
+       #.rate_limiter(RateLimiter(max_retries=3))
         .build()
     )
     
