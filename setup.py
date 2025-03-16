@@ -11,7 +11,6 @@ def initial_setup():
             getpass.getpass("Set password (min 8 chars): ").encode()
         ).hexdigest()
     }
-    
     with open("config.json", "w") as f:
         json.dump(config, f)
         

@@ -21,6 +21,28 @@ from telegram.ext import (
     ConversationHandler
 )
 
+from flask import Flask
+
+# Create a simple web server to bind to Render's port
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Bot is running", 200
+
+if __name__ == '__main__':
+    # Start web server on port 10000 (Render's requirement)
+    import threading
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
+    
+    # Start Telegram bot
+    if os.getenv('ENVIRONMENT') == 'production':
+        app.run_webhook(
+            # ... existing webhook config ...
+        )
+    else:
+        app.run_polling()
+
 # ====================== CONFIGURATION ======================
 CONFIG_FILE = "config.json"
 AUTHORIZED_USERS = {}
