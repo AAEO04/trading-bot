@@ -20,7 +20,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
     ConversationHandler,
-    RateLimiter
+    AIORateLimiter
 )
 import aiohttp.web
 import asyncio
@@ -216,11 +216,14 @@ async def warmup_models():
 
 if __name__ == "__main__":
     bot_app = (
-        ApplicationBuilder()
-        .token(TELEGRAM_TOKEN)
-       #.rate_limiter(RateLimiter(max_retries=3))
-        .build()
-    )
+    ApplicationBuilder()
+    .token(TELEGRAM_TOKEN)
+    .rate_limiter(AIORateLimiter(
+        max_retries=3, 
+        max_delay=30
+    ))
+    .build()
+)
     
     if IS_RENDER:
         asyncio.run(warmup_models())
