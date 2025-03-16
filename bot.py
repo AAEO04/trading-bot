@@ -221,17 +221,17 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def authenticate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_input = update.message.text
     if len(user_input) < 8:
-        await show_dashboard(update, context)
-        return AUTH  # Use the defined AUTH variable
+        await show_dashboard(update, context)  # Add context argument
+        return AUTH
     
     if hashlib.sha256(user_input.encode()).hexdigest() == PASSWORD_HASH:
         AUTHORIZED_USERS[update.effective_user.id] = True
         context.user_data["trading_pair"] = DEFAULT_TRADING_PAIR
-        await show_dashboard(update)
+        await show_dashboard(update, context)  # Add context argument
         return ConversationHandler.END
     
     await update.message.reply_text("❌ Invalid password. Try again:")
-    return AUTH  # Use the defined AUTH variable
+    return AUTH
 
 async def send_results(message: Any, df: pd.DataFrame) -> None:
     filename = f"results_{uuid.uuid4().hex}.png"
@@ -313,6 +313,17 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Models Ready: {len(MLTrader().models)} models"
     )
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors in the telegram bot."""
+    logging.error(f"Update {update} caused error {context.error}")
+    try:
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ An error occurred while processing your request."
+            )
+    except Exception as e:
+        logging.error(f"Error in error handler: {e}")
+
 # ====================== MAIN EXECUTION ======================
 async def warmup_models():
     logging.info("Warming up ML models...")
@@ -327,6 +338,7 @@ async def warmup_models():
     logging.info("Model warmup complete")
 
 if __name__ == "__main__":
+    # Initialize bot application
     bot_app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
@@ -343,82 +355,62 @@ if __name__ == "__main__":
         fallbacks=[CommandHandler("start", start)]
     )
     
+    # Add handlers
     bot_app.add_handler(conv_handler)
     bot_app.add_handler(CommandHandler("help", help_command))
     bot_app.add_handler(CommandHandler("backtest", backtest))
     bot_app.add_handler(CommandHandler("status", status))
     
-    if IS_RENDER:
-        asyncio.run(warmup_models())
+    # Add error handler
+    bot_app.add_error_handler(error_handler)
     
     if config.environment == "production":
         async def main():
-            # Create the web application with better logging
-            web_app = aiohttp.web.Application()
-            web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
-            
-            # Initialize the bot
-            await bot_app.initialize()
-            await bot_app.start()
-            
-            # Get the bot info to verify token
-            me = await bot_app.bot.get_me()
-            logging.info(f"Bot authorized as @{me.username}")
-            
-            # Setup webhook with proper verification
-            webhook_url = f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}"
-            await bot_app.bot.set_webhook(
-                url=webhook_url,
-                allowed_updates=['message', 'callback_query'],
-                secret_token=WEBHOOK_SECRET,
-                drop_pending_updates=True
-            )
-            logging.info(f"Webhook set to: {webhook_url}")
-            
-            # Improved webhook handler with verification and logging
-            async def handle_webhook(request):
-                try:
-                    # Verify secret token
-                    if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET:
-                        logging.warning("Invalid secret token in webhook request")
-                        return aiohttp.web.Response(status=403)
-                    
-                    # Parse update
-                    update_data = await request.json()
-                    logging.info("Received webhook update")
-                    
-                    # Process update
-                    update = Update.de_json(update_data, bot_app.bot)
-                    await bot_app.process_update(update)
-                    
-                    return aiohttp.web.Response()
-                except Exception as e:
-                    logging.error(f"Error processing webhook: {e}")
-                    return aiohttp.web.Response(status=500)
-            
-            # Add webhook route
-            web_app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
-            
-            # Start server
-            port = int(os.getenv("PORT", 10000))
-            runner = aiohttp.web.AppRunner(web_app)
-            await runner.setup()
-            site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            logging.info(f"Server started on port {port}")
-            
-            # Keep alive with health checks
-            while True:
-                try:
-                    # Verify bot is still responding
-                    await bot_app.bot.get_me()
+            try:
+                # Initialize web app
+                web_app = aiohttp.web.Application()
+                web_app.router.add_get("/", lambda r: aiohttp.web.Response(text="OK"))
+                
+                # Start bot
+                await bot_app.initialize()
+                await bot_app.start()
+                
+                # Set webhook
+                webhook_url = f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}"
+                await bot_app.bot.set_webhook(
+                    url=webhook_url,
+                    allowed_updates=["message", "callback_query"],
+                    secret_token=WEBHOOK_SECRET,
+                    drop_pending_updates=True
+                )
+                logging.info(f"Webhook set to: {webhook_url}")
+                
+                # Add webhook handler
+                web_app.router.add_post(
+                    f"/{TELEGRAM_TOKEN}",
+                    lambda r: bot_app.update_queue.put_nowait(r)
+                )
+                
+                # Start server
+                runner = aiohttp.web.AppRunner(web_app)
+                await runner.setup()
+                site = aiohttp.web.TCPSite(
+                    runner,
+                    host="0.0.0.0",
+                    port=int(os.getenv("PORT", 10000))
+                )
+                await site.start()
+                
+                # Keep alive
+                while True:
+                    await asyncio.sleep(300)
                     logging.info("Bot is alive")
-                    await asyncio.sleep(300)  # Check every 5 minutes
-                except Exception as e:
-                    logging.error(f"Health check failed: {e}")
-                    await asyncio.sleep(60)  # Retry sooner if failed
-
-        # Run everything
+            
+            except Exception as e:
+                logging.error(f"Fatal error: {e}")
+                raise
+        
+        # Run the bot
         if IS_RENDER:
             asyncio.run(warmup_models())
         asyncio.run(main())
