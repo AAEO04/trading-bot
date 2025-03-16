@@ -56,7 +56,7 @@ config = Settings()
 # Access configuration values
 TELEGRAM_TOKEN = config.telegram_token
 PASSWORD_HASH = config.password_hash
-PORT = config.port
+PORT = int(os.getenv("PORT", 10000))  # Default to 10000 if PORT is not set
 WEBHOOK_SECRET = config.webhook_secret
 IS_RENDER = config.render
 
@@ -170,7 +170,7 @@ async def fetch_data_async(
             if attempt == max_retries:
                 raise
             await asyncio.sleep(delay)
-            delay = min(delay * 2, 10)  # Exponential backoff with max 10s
+            delay = min(delay * 2, 5)  # Reduce max delay to 5 seconds
             logging.warning(f"Retry {attempt} failed. New delay: {delay:.1f}s")
 
 # ====================== TELEGRAM HANDLERS ======================
@@ -213,9 +213,10 @@ async def send_results(message: Any, df: pd.DataFrame) -> None:
         )
     finally:
         try:
-            os.remove(filename)
-        except OSError:
-            pass
+            if os.path.exists(filename):
+                os.remove(filename)
+        except OSError as e:
+            logging.error(f"Error deleting file {filename}: {e}")
 
 # ====================== MAIN EXECUTION ======================
 async def warmup_models():
@@ -228,15 +229,12 @@ if __name__ == "__main__":
     bot_app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
-        .rate_limiter(AIORateLimiter(
-            max_retries=3, 
-            max_delay=30
-        ))
+        .rate_limiter(AIORateLimiter(max_retries=1))  # Reduce retries
         .build()
     )
     
     if IS_RENDER:
-        asyncio.run(warmup_models())
+        asyncio.run(warmup_models())  # Used await  instead of asyncio.run
     
     if os.getenv("ENVIRONMENT") == "production":
         web_app = aiohttp.web.Application()
