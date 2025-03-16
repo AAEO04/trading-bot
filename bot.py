@@ -256,6 +256,63 @@ async def send_results(message: Any, df: pd.DataFrame) -> None:
         except OSError as e:
             logging.error(f"Error deleting file {filename}: {e}")
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start command handler."""
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text(
+            "🔒 Please enter the password to access the bot:"
+        )
+        return AUTH
+    await show_dashboard(update, context)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Help command handler."""
+    await update.message.reply_text(
+        "📚 Available commands:\n"
+        "/start - Start the bot\n"
+        "/help - Show this help message\n"
+        "/backtest - Run backtest simulation\n"
+        "/status - Show current status"
+    )
+
+async def backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Backtest command handler."""
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("❌ Please authenticate first using /start")
+        return
+    
+    await update.message.reply_text("🔄 Running backtest simulation...")
+    try:
+        data = await fetch_data_async(context.user_data.get("trading_pair", DEFAULT_TRADING_PAIR))
+        df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
+        # Add technical indicators and generate signals
+        df = MLTrader()._add_indicators(df)
+        df['signal'] = np.where(df['MA_50'] > df['MA_200'], 1, -1)
+        
+        # Run backtest
+        results = Backtester().run(df)
+        await send_results(update.message, results)
+    except Exception as e:
+        logging.error(f"Backtest failed: {e}")
+        await update.message.reply_text(f"❌ Error running backtest: {str(e)}")
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Status command handler."""
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("❌ Please authenticate first using /start")
+        return
+    
+    trading_pair = context.user_data.get("trading_pair", DEFAULT_TRADING_PAIR)
+    await update.message.reply_text(
+        f"📊 Bot Status:\n"
+        f"Trading Pair: {trading_pair}\n"
+        f"Environment: {config.environment}\n"
+        f"Models Ready: {len(MLTrader().models)} models"
+    )
+
 # ====================== MAIN EXECUTION ======================
 async def warmup_models():
     logging.info("Warming up ML models...")
@@ -276,6 +333,20 @@ if __name__ == "__main__":
         .rate_limiter(AIORateLimiter(max_retries=1))
         .build()
     )
+    
+    # Register handlers
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, authenticate)]
+        },
+        fallbacks=[CommandHandler("start", start)]
+    )
+    
+    bot_app.add_handler(conv_handler)
+    bot_app.add_handler(CommandHandler("help", help_command))
+    bot_app.add_handler(CommandHandler("backtest", backtest))
+    bot_app.add_handler(CommandHandler("status", status))
     
     if IS_RENDER:
         asyncio.run(warmup_models())
