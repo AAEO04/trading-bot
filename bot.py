@@ -324,6 +324,27 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logging.error(f"Error in error handler: {e}")
 
+async def handle_webhook(request):
+    """Process webhook updates from Telegram."""
+    try:
+        # Verify secret token
+        if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET:
+            logging.warning("Invalid webhook secret token")
+            return aiohttp.web.Response(status=403)
+        
+        # Get update data
+        update_data = await request.json()
+        logging.info("Received webhook update")
+        
+        # Process update
+        update = Update.de_json(update_data, bot_app.bot)
+        await bot_app.process_update(update)
+        
+        return aiohttp.web.Response()
+    except Exception as e:
+        logging.error(f"Webhook error: {e}")
+        return aiohttp.web.Response()
+
 # ====================== MAIN EXECUTION ======================
 async def warmup_models():
     logging.info("Warming up ML models...")
@@ -374,6 +395,7 @@ if __name__ == "__main__":
                 # Start bot
                 await bot_app.initialize()
                 await bot_app.start()
+                logging.info("Bot initialized and started")
                 
                 # Set webhook
                 webhook_url = f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}"
@@ -385,11 +407,8 @@ if __name__ == "__main__":
                 )
                 logging.info(f"Webhook set to: {webhook_url}")
                 
-                # Add webhook handler
-                web_app.router.add_post(
-                    f"/{TELEGRAM_TOKEN}",
-                    lambda r: bot_app.update_queue.put_nowait(r)
-                )
+                # Add webhook route
+                web_app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
                 
                 # Start server
                 runner = aiohttp.web.AppRunner(web_app)
@@ -400,11 +419,17 @@ if __name__ == "__main__":
                     port=int(os.getenv("PORT", 10000))
                 )
                 await site.start()
+                logging.info(f"Server started on port {PORT}")
                 
-                # Keep alive
+                # Keep alive with health checks
                 while True:
-                    await asyncio.sleep(300)
-                    logging.info("Bot is alive")
+                    try:
+                        me = await bot_app.bot.get_me()
+                        logging.info(f"Bot is alive as @{me.username}")
+                        await asyncio.sleep(300)
+                    except Exception as e:
+                        logging.error(f"Health check failed: {e}")
+                        await asyncio.sleep(60)
             
             except Exception as e:
                 logging.error(f"Fatal error: {e}")
