@@ -11,5 +11,4 @@ scikit-learn>=1.2.0
 python-dotenv>=1.0.0
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
-logging>=0.5.1.2
 typing-extensions==4.8.0
