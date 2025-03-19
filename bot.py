@@ -36,6 +36,11 @@ from datetime import datetime
 from telegram import Bot
 from logging.handlers import RotatingFileHandler
 
+# Move these before the main execution block
+START_TIME = datetime.now()
+bot_app = None  # Initialize at module level
+logger = logging.getLogger(__name__)
+
 # ====================== CONFIGURATION ======================
 logging.basicConfig(
     level=logging.INFO,
@@ -323,28 +328,119 @@ class PortfolioAnalytics:
             f"Total Trades: {metrics['num_trades']}"
         )
 
+class SignalGenerator:
+    def __init__(self, leverage_range: Tuple[int, int] = (20, 75)):
+        self.min_leverage, self.max_leverage = leverage_range
+        self.ml_trader = MLTrader()
+    
+    def calculate_entry_range(self, current_price: float, volatility: float) -> Tuple[float, float]:
+        """Calculate entry range based on price and volatility."""
+        spread = current_price * (volatility * 0.1)  # 10% of volatility
+        return (
+            round(current_price - spread, 3),
+            round(current_price + spread, 3)
+        )
+    
+    def calculate_tp_sl(self, 
+                       entry_mid: float, 
+                       direction: str, 
+                       risk_reward: float = 1.5) -> Tuple[float, float]:
+        """Calculate take profit and stop loss levels."""
+        if direction == "LONG":
+            sl = entry_mid * 0.93  # 7% stop loss
+            tp = entry_mid + (entry_mid - sl) * risk_reward
+        else:
+            sl = entry_mid * 1.07  # 7% stop loss
+            tp = entry_mid - (sl - entry_mid) * risk_reward
+        
+        return round(tp, 3), round(sl, 3)
+
+    async def generate_signal(self, pair: str, timeframe: str = "5m") -> Optional[str]:
+        """Generate trading signal with entry, TP, and SL levels."""
+        try:
+            # Fetch recent data
+            data = await fetch_data_async(pair, timeframe, limit=100)
+            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df = self.ml_trader._add_indicators(df)
+            
+            # Calculate signal
+            current_price = df['close'].iloc[-1]
+            volatility = df['close'].pct_change().std()
+            
+            # Get signal direction
+            signal_strength = 0
+            
+            # Check MA Crossover
+            if df['MA_50'].iloc[-1] > df['MA_200'].iloc[-1]:
+                signal_strength += 1
+            
+            # Check RSI
+            if df['RSI'].iloc[-1] < 30:
+                signal_strength += 1
+            elif df['RSI'].iloc[-1] > 70:
+                signal_strength -= 1
+            
+            # Check MACD
+            if df['MACD'].iloc[-1] > 0:
+                signal_strength += 1
+            
+            # Get ML prediction
+            X = df[["MA_50", "MA_200", "RSI", "MACD"]].iloc[-1:].values
+            X_scaled = self.ml_trader.scaler.transform(X)
+            ml_predictions = []
+            for model in self.ml_trader.models.values():
+                pred = model.predict(X_scaled)
+                ml_predictions.append(1 if pred > 0 else -1)
+            
+            if np.mean(ml_predictions) > 0:
+                signal_strength += 1
+            
+            # Generate signal if strong enough
+            if abs(signal_strength) >= 2:
+                direction = "LONG" if signal_strength > 0 else "SHORT"
+                entry_low, entry_high = self.calculate_entry_range(current_price, volatility)
+                tp, sl = self.calculate_tp_sl(current_price, direction)
+                
+                return (
+                    f"{direction}📍\n\n"
+                    f"{pair} {self.min_leverage}x - {self.max_leverage}x\n\n"
+                    f"ENTRY : {entry_low:.3f} - {entry_high:.3f}\n\n"
+                    f"TP : {tp:.3f}\n\n"
+                    f"SL : {sl:.3f}"
+                )
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error generating signal: {e}")
+            return None
+
 # ====================== DATA FETCHING ======================
 async def fetch_data_async(
     trading_pair: str = DEFAULT_TRADING_PAIR,
-    timeframe: str = "1d",  # Add missing timeframe parameter
+    timeframe: str = "1d",
     max_retries: int = 5,
     initial_delay: float = 1.0
 ) -> pd.DataFrame:
     delay = initial_delay
     for attempt in range(1, max_retries + 1):
         try:
-            return await asyncio.to_thread(
+            data = await asyncio.to_thread(
                 EXCHANGE.fetch_ohlcv,
                 trading_pair,
-                timeframe,  # Use the timeframe parameter
+                timeframe,
                 limit=365
             )
+            if not data:
+                raise ValueError("Empty data received")
+            return data
         except Exception as e:
             if attempt == max_retries:
+                logger.error(f"Failed to fetch data after {max_retries} attempts: {e}")
                 raise
             await asyncio.sleep(delay)
-            delay = min(delay * 2, 5)  # Reduce max delay to 5 seconds
-            logging.warning(f"Retry {attempt} failed. New delay: {delay:.1f}s")
+            delay = min(delay * 2, 5)
+            logger.warning(f"Retry {attempt} failed. New delay: {delay:.1f}s")
 
 async def get_available_pairs() -> List[str]:
     """Fetch available futures trading pairs from Binance."""
@@ -354,7 +450,9 @@ async def get_available_pairs() -> List[str]:
             symbol for symbol in markets.keys()
             if '/USDT' in symbol and markets[symbol].get('future', False)
         ]
-        return sorted(futures_pairs)
+        sorted_pairs = sorted(futures_pairs)
+        logging.info(f"Found {len(sorted_pairs)} available futures pairs")
+        return sorted_pairs
     except Exception as e:
         logging.error(f"Error fetching trading pairs: {e}")
         return ["BTC/USDT", "ETH/USDT"]  # Fallback pairs
@@ -462,7 +560,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Show this help message\n\n"
         "_Examples:_\n"
         "• /search BTC - Find BTC pairs\n"
-        "• /alert 50000 above - Alert when BTC > $50000",
+        "• /signal - Get trading signal for current pair",
         parse_mode='Markdown'
     )
 
@@ -600,13 +698,15 @@ async def search_pairs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "❌ Error searching pairs. Please try again."
         )
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle button callbacks."""
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
     query = update.callback_query
     await query.answer()
     
     try:
-        if query.data.startswith("pair_"):
+        if query.data.startswith("strat_"):
+            # ...strategy selection code...
+            return SELECTING_STRATEGY
+        elif query.data.startswith("pair_"):
             # Handle trading pair selection
             pair = query.data.replace("pair_", "")
             context.user_data["trading_pair"] = pair
@@ -623,6 +723,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Now choose a timeframe:",
                 reply_markup=reply_markup
             )
+            return None
             
         elif query.data.startswith("tf_"):
             # Handle timeframe selection
@@ -637,12 +738,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Use /backtest to run simulation\n"
                 f"Use /search to find another pair"
             )
+            return None
             
     except Exception as e:
         logging.error(f"Button handler error: {e}")
         await query.edit_message_text(
             "❌ Error processing selection. Please try again."
         )
+        return None
 
 class RiskSettings:
     def __init__(self):
@@ -819,6 +922,55 @@ async def set_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Error setting alert: {e}")
         await update.message.reply_text("❌ Error setting alert")
 
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate and send trading signal."""
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("❌ Please authenticate first using /start")
+        return
+    
+    pair = context.user_data.get("trading_pair", DEFAULT_TRADING_PAIR)
+    
+    try:
+        await update.message.reply_text(f"🔄 Generating signal for {pair}...")
+        
+        signal_gen = SignalGenerator()
+        signal_text = await signal_gen.generate_signal(pair)
+        
+        if signal_text:
+            await update.message.reply_text(
+                f"🎯 *Signal Generated*\n\n{signal_text}",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                "📊 No clear signal at the moment.\n"
+                "Try again later or use /analysis for detailed market analysis."
+            )
+    
+    except Exception as e:
+        logging.error(f"Error in signal command: {e}")
+        await update.message.reply_text("❌ Error generating signal")
+
+async def list_pairs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all available trading pairs."""
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("❌ Please authenticate first using /start")
+        return
+    
+    try:
+        pairs = await get_available_pairs()
+        pairs_text = "\n".join(f"• {pair}" for pair in pairs)
+        
+        await update.message.reply_text(
+            f"📊 *Available Trading Pairs ({len(pairs)})*\n\n"
+            f"{pairs_text}\n\n"
+            "Use /search to find specific pairs",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logging.error(f"Error listing pairs: {e}")
+        await update.message.reply_text("❌ Error fetching available pairs")
+
 # ====================== MAIN EXECUTION ======================
 async def warmup_models():
     logging.info("Warming up ML models...")
@@ -891,6 +1043,9 @@ if __name__ == "__main__":
     bot_app.add_handler(CommandHandler("risk", risk_settings))
     bot_app.add_handler(CommandHandler("analysis", market_analysis))
     bot_app.add_handler(CommandHandler("alert", set_alert))
+    bot_app.add_handler(CommandHandler("signal", signal))
+    bot_app.add_handler(CommandHandler("list_pairs", list_pairs))
+    bot_app.add_handler(CommandHandler("pairs", list_pairs))
     bot_app.add_error_handler(error_handler)
     logging.info("All handlers registered successfully")
     
@@ -908,7 +1063,7 @@ if __name__ == "__main__":
                 # Set webhook
                 webhook_url = f"https://trading-bot-pn7h.onrender.com/{TELEGRAM_TOKEN}"
                 webhook_info = await bot_app.bot.get_webhook_info()
-                if webhook_info.url != webhook_url:
+                if (webhook_info.url != webhook_url):
                     await bot_app.bot.set_webhook(
                         url=webhook_url,
                         allowed_updates=["message", "callback_query"],
@@ -937,6 +1092,9 @@ if __name__ == "__main__":
                 await site.start()
                 logger.info("Server started")
                 
+                # Create alert checker task
+                alert_task = asyncio.create_task(price_alerts.check_alerts(bot_app.bot))
+                
                 # Keep alive
                 while True:
                     await asyncio.sleep(300)
@@ -945,6 +1103,9 @@ if __name__ == "__main__":
             except Exception as e:
                 logger.error(f"Fatal error: {e}", exc_info=True)
                 raise
+            finally:
+                if 'alert_task' in locals():
+                    alert_task.cancel()
         
         # Run the bot
         if IS_RENDER:
