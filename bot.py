@@ -746,6 +746,73 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "❌ Error processing selection. Please try again."
         )
         return None
+    
+    await list_pairs(query, context)
+
+async def select_strategies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle strategy selection."""
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("❌ Please authenticate first using /start")
+        return
+    
+    # Get currently active strategies
+    active_strategies = context.user_data.get("active_strategies", STRATEGIES.copy())
+    
+    # Create keyboard with strategies
+    keyboard = []
+    for strategy in STRATEGIES:
+        is_active = strategy in active_strategies
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{'✅' if is_active else '❌'} {strategy}",
+                callback_data=f"strat_{strategy}"
+            )
+        ])
+    
+    # Add "All Strategies" and "Done" buttons
+    keyboard.extend([
+        [InlineKeyboardButton("📊 All Strategies", callback_data="strat_all")],
+        [InlineKeyboardButton("✨ Done", callback_data="strat_done")]
+    ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "🎯 *Strategy Selection*\n\n"
+        "Select the strategies you want to use:\n"
+        "✅ = Active  |  ❌ = Inactive\n\n"
+        "*Available Strategies:*\n"
+        "• MA Crossover - Moving Average strategy\n"
+        "• RSI - Relative Strength Index\n"
+        "• MACD - Moving Average Convergence Divergence\n"
+        "• ML Enhanced - Machine Learning predictions\n\n"
+        "Click a strategy to toggle it.\n"
+        "Click Done when finished.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+def get_strategy_keyboard(active_strategies: List[str]) -> List[List[InlineKeyboardButton]]:
+    """Create keyboard for strategy selection."""
+    keyboard = []
+    
+    # Add strategy buttons
+    for strategy in STRATEGIES:
+        is_active = strategy in active_strategies
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{'✅' if is_active else '❌'} {strategy}",
+                callback_data=f"strat_{strategy}"
+            )
+        ])
+    
+    # Add control buttons
+    keyboard.extend([
+        [InlineKeyboardButton("📊 All Strategies", callback_data="strat_all")],
+        [InlineKeyboardButton("✨ Done", callback_data="strat_done")]
+    ])
+    
+    return keyboard
 
 class RiskSettings:
     def __init__(self):
